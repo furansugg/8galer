@@ -16,7 +16,7 @@ Overlay Android ringan untuk garis bantu meja biliar.
 
 1. Tahan tombol pintasan, lalu tap **MODE: LUBANG** untuk berpindah ke **MODE: KORIDOR**.
 2. Geser dua lingkaran ke titik awal dan tujuan. Dua garis paralel mengikuti otomatis.
-3. Atur diameter memakai slider atau tombol **− / +** (`20–80 dp`).
+3. Atur diameter memakai slider atau tombol **− / +** (`8–80 dp`). Koridor menampilkan dua batas dan satu garis tengah solid.
 4. Tap **WARNA** untuk mengganti warna. Geser judul panel untuk memindahkan panel.
 5. Tahan **✓** untuk menutup pengaturan. Ukuran, mode, warna, dan posisi tersimpan.
 

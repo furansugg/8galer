@@ -179,8 +179,8 @@ public final class OverlayService extends Service {
         sizeRow.setGravity(Gravity.CENTER_VERTICAL);
         Button minus = button("−"), plus = button("+");
         SeekBar slider = new SeekBar(this);
-        slider.setMax(60);
-        slider.setProgress(diameterDp - 20);
+        slider.setMax(72);
+        slider.setProgress(diameterDp - 8);
         sizeLabel = new TextView(this);
         sizeLabel.setTextColor(Color.WHITE);
         sizeLabel.setTextSize(12);
@@ -189,7 +189,7 @@ public final class OverlayService extends Service {
         plus.setOnClickListener(v -> setDiameter(diameterDp + 1, slider));
         slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
-                if (fromUser) setDiameter(progress + 20, null);
+                if (fromUser) setDiameter(progress + 8, null);
             }
             @Override public void onStartTrackingTouch(SeekBar bar) {}
             @Override public void onStopTrackingTouch(SeekBar bar) { save(); }
@@ -215,8 +215,8 @@ public final class OverlayService extends Service {
     }
 
     private void setDiameter(int value, SeekBar slider) {
-        diameterDp = Math.max(20, Math.min(80, value));
-        if (slider != null) slider.setProgress(diameterDp - 20);
+        diameterDp = Math.max(8, Math.min(80, value));
+        if (slider != null) slider.setProgress(diameterDp - 8);
         sizeLabel.setText(diameterDp + " dp");
         guide.invalidate();
         save();
@@ -407,7 +407,7 @@ public final class OverlayService extends Service {
             frame.setPathEffect(new DashPathEffect(new float[]{dp(8), dp(6)}, 0));
         }
         void setLineColor(int color) {
-            line.setColor((color & 0x00ffffff) | 0x99000000);
+            line.setColor(color);
             invalidate();
         }
         @Override protected void onDraw(Canvas c) {
@@ -419,6 +419,7 @@ public final class OverlayService extends Service {
                     float ox = -dy / length * radius, oy = dx / length * radius;
                     c.drawLine(targetX + ox, targetY + oy, targetBX + ox, targetBY + oy, line);
                     c.drawLine(targetX - ox, targetY - oy, targetBX - ox, targetBY - oy, line);
+                    c.drawLine(targetX, targetY, targetBX, targetBY, line);
                 }
                 c.drawCircle(targetX, targetY, radius, line);
                 c.drawCircle(targetBX, targetBY, radius, line);
