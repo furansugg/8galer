@@ -21,6 +21,9 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.Button;
+import android.widget.LinearLayout;
+import android.widget.SeekBar;
 import android.widget.TextView;
 
 public final class OverlayService extends Service {
@@ -32,10 +35,12 @@ public final class OverlayService extends Service {
     private WindowManager wm;
     private SharedPreferences prefs;
     private GuideView guide;
-    private View target, bubble;
-    private float targetX, targetY;
+    private View target, targetB, bubble, panel;
+    private Button modeButton, colorButton;
+    private TextView sizeLabel;
+    private float targetX, targetY, targetBX, targetBY;
     private boolean active = true, editing;
-    private int screenW, screenH, colorIndex;
+    private int screenW, screenH, colorIndex, mode, diameterDp;
 
     @Override public void onCreate() {
         super.onCreate();
@@ -48,6 +53,8 @@ public final class OverlayService extends Service {
         addGuide();
         for (int i = 0; i < 4; i++) addPocketHandle(i);
         addTarget();
+        addTargetB();
+        addPanel();
         addBubble();
         refresh();
         setEditing(false);
@@ -65,7 +72,11 @@ public final class OverlayService extends Service {
         updateMiddlePockets();
         targetX = prefs.getFloat("x", screenW * .5f);
         targetY = prefs.getFloat("y", screenH * .5f);
+        targetBX = prefs.getFloat("bx", screenW * .7f);
+        targetBY = prefs.getFloat("by", screenH * .5f);
         colorIndex = prefs.getInt("color", 0) % COLORS.length;
+        mode = prefs.getInt("mode", 0);
+        diameterDp = prefs.getInt("diameter", 38);
     }
 
     private void startForegroundNow() {
@@ -77,7 +88,7 @@ public final class OverlayService extends Service {
         Notification n = new Notification.Builder(this, id)
                 .setSmallIcon(android.R.drawable.ic_menu_compass)
                 .setContentTitle("8Galer aktif")
-                .setContentText("Tap 8: toggle · tahan 8: atur lubang")
+                .setContentText("Tap 8: toggle · tahan 8: pengaturan")
                 .setContentIntent(open).setOngoing(true).build();
         if (Build.VERSION.SDK_INT >= 34) startForeground(8, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
         else startForeground(8, n);
@@ -111,7 +122,7 @@ public final class OverlayService extends Service {
 
     private void addTarget() {
         target = new View(this);
-        target.setBackground(circle(0x1200e5ff, 0xdd00e5ff, 2));
+        target.setBackgroundColor(Color.TRANSPARENT);
         target.setOnTouchListener((view, e) -> {
             if (e.getAction() == MotionEvent.ACTION_DOWN || e.getAction() == MotionEvent.ACTION_MOVE) {
                 targetX = clamp(e.getRawX(), 0, screenW);
@@ -122,7 +133,111 @@ public final class OverlayService extends Service {
             if (e.getAction() == MotionEvent.ACTION_UP) { save(); return true; }
             return false;
         });
-        wm.addView(target, base(dp(38), dp(38)));
+        wm.addView(target, base(dp(56), dp(56)));
+    }
+
+    private void addTargetB() {
+        targetB = new View(this);
+        targetB.setBackgroundColor(Color.TRANSPARENT);
+        targetB.setOnTouchListener((view, e) -> {
+            if (e.getAction() == MotionEvent.ACTION_DOWN || e.getAction() == MotionEvent.ACTION_MOVE) {
+                targetBX = clamp(e.getRawX(), 0, screenW);
+                targetBY = clamp(e.getRawY(), 0, screenH);
+                refresh();
+                return true;
+            }
+            if (e.getAction() == MotionEvent.ACTION_UP) { save(); return true; }
+            return false;
+        });
+        wm.addView(targetB, base(dp(56), dp(56)));
+    }
+
+    private void addPanel() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(8), dp(5), dp(8), dp(7));
+        box.setBackgroundColor(0xdd0f172a);
+
+        TextView drag = new TextView(this);
+        drag.setText("8Galer  ·  geser panel");
+        drag.setTextColor(0xffcbd5e1);
+        drag.setTextSize(12);
+        drag.setGravity(Gravity.CENTER);
+        makeDraggable(drag, box);
+        box.addView(drag, new LinearLayout.LayoutParams(-1, dp(28)));
+
+        LinearLayout actions = new LinearLayout(this);
+        modeButton = button("MODE");
+        colorButton = button("WARNA");
+        modeButton.setOnClickListener(v -> { mode = 1 - mode; applyMode(); save(); });
+        colorButton.setOnClickListener(v -> cycleColor());
+        actions.addView(modeButton, new LinearLayout.LayoutParams(0, dp(40), 1));
+        actions.addView(colorButton, new LinearLayout.LayoutParams(0, dp(40), 1));
+        box.addView(actions, new LinearLayout.LayoutParams(-1, dp(40)));
+
+        LinearLayout sizeRow = new LinearLayout(this);
+        sizeRow.setGravity(Gravity.CENTER_VERTICAL);
+        Button minus = button("−"), plus = button("+");
+        SeekBar slider = new SeekBar(this);
+        slider.setMax(60);
+        slider.setProgress(diameterDp - 20);
+        sizeLabel = new TextView(this);
+        sizeLabel.setTextColor(Color.WHITE);
+        sizeLabel.setTextSize(12);
+        sizeLabel.setGravity(Gravity.CENTER);
+        minus.setOnClickListener(v -> setDiameter(diameterDp - 1, slider));
+        plus.setOnClickListener(v -> setDiameter(diameterDp + 1, slider));
+        slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                if (fromUser) setDiameter(progress + 20, null);
+            }
+            @Override public void onStartTrackingTouch(SeekBar bar) {}
+            @Override public void onStopTrackingTouch(SeekBar bar) { save(); }
+        });
+        sizeRow.addView(minus, new LinearLayout.LayoutParams(dp(44), dp(40)));
+        sizeRow.addView(slider, new LinearLayout.LayoutParams(0, dp(40), 1));
+        sizeRow.addView(plus, new LinearLayout.LayoutParams(dp(44), dp(40)));
+        sizeRow.addView(sizeLabel, new LinearLayout.LayoutParams(dp(58), dp(40)));
+        box.addView(sizeRow, new LinearLayout.LayoutParams(-1, dp(42)));
+
+        panel = box;
+        WindowManager.LayoutParams p = base(dp(300), dp(118));
+        p.x = Math.max(0, (screenW - dp(300)) / 2); p.y = dp(12);
+        wm.addView(box, p);
+        updatePanel();
+    }
+
+    private Button button(String text) {
+        Button b = new Button(this);
+        b.setText(text); b.setTextSize(11); b.setTextColor(Color.WHITE);
+        b.setBackgroundColor(0xff334155);
+        return b;
+    }
+
+    private void setDiameter(int value, SeekBar slider) {
+        diameterDp = Math.max(20, Math.min(80, value));
+        if (slider != null) slider.setProgress(diameterDp - 20);
+        sizeLabel.setText(diameterDp + " dp");
+        guide.invalidate();
+        save();
+    }
+
+    private void makeDraggable(View handle, View moved) {
+        handle.setOnTouchListener(new View.OnTouchListener() {
+            float downX, downY; int originX, originY;
+            @Override public boolean onTouch(View v, MotionEvent e) {
+                WindowManager.LayoutParams p = (WindowManager.LayoutParams) moved.getLayoutParams();
+                if (e.getAction() == MotionEvent.ACTION_DOWN) {
+                    downX = e.getRawX(); downY = e.getRawY(); originX = p.x; originY = p.y; return true;
+                }
+                if (e.getAction() == MotionEvent.ACTION_MOVE) {
+                    p.x = Math.round(clamp(originX + e.getRawX() - downX, 0, screenW - p.width));
+                    p.y = Math.round(clamp(originY + e.getRawY() - downY, 0, screenH - p.height));
+                    wm.updateViewLayout(moved, p); return true;
+                }
+                return e.getAction() == MotionEvent.ACTION_UP;
+            }
+        });
     }
 
     private void addBubble() {
@@ -165,7 +280,7 @@ public final class OverlayService extends Service {
                 if (e.getAction() == MotionEvent.ACTION_UP || e.getAction() == MotionEvent.ACTION_CANCEL) {
                     handler.removeCallbacks(longPress);
                     if (e.getAction() == MotionEvent.ACTION_UP && !moved && !longPressed[0]) {
-                        if (editing) cycleColor(); else setActive(!active);
+                        setActive(!active);
                     }
                     return true;
                 }
@@ -183,27 +298,49 @@ public final class OverlayService extends Service {
         if (!active) editing = false;
         guide.setVisibility(active ? View.VISIBLE : View.GONE);
         target.setVisibility(active ? View.VISIBLE : View.GONE);
+        targetB.setVisibility(active && mode == 1 ? View.VISIBLE : View.GONE);
+        panel.setVisibility(active && editing ? View.VISIBLE : View.GONE);
         for (View handle : pocketHandles) handle.setVisibility(active && editing ? View.VISIBLE : View.GONE);
+        applyMode();
         updateBubble();
     }
 
     private void setEditing(boolean enabled) {
         editing = enabled;
-        for (View handle : pocketHandles) handle.setVisibility(active && editing ? View.VISIBLE : View.GONE);
+        panel.setVisibility(active && editing ? View.VISIBLE : View.GONE);
+        applyMode();
         guide.invalidate();
         updateBubble();
     }
 
     private void updateBubble() {
-        ((TextView) bubble).setText(editing ? "●" : "8");
+        ((TextView) bubble).setText(editing ? "✓" : mode == 1 ? "Ⅱ" : "8");
         int color = !active ? 0xaa475569 : editing ? COLORS[colorIndex] : 0xdd16a34a;
         bubble.setBackground(circle(color, 0xddffffff, 1));
+    }
+
+    private void applyMode() {
+        if (targetB == null || panel == null) return;
+        targetB.setVisibility(active && mode == 1 ? View.VISIBLE : View.GONE);
+        for (View handle : pocketHandles) handle.setVisibility(active && editing && mode == 0 ? View.VISIBLE : View.GONE);
+        updatePanel();
+        updateBubble();
+        guide.invalidate();
+    }
+
+    private void updatePanel() {
+        if (modeButton == null) return;
+        modeButton.setText(mode == 0 ? "MODE: LUBANG" : "MODE: KORIDOR");
+        colorButton.setText("WARNA");
+        colorButton.setTextColor(COLORS[colorIndex]);
+        sizeLabel.setText(diameterDp + " dp");
     }
 
     private void cycleColor() {
         colorIndex = (colorIndex + 1) % COLORS.length;
         guide.setLineColor(COLORS[colorIndex]);
         updateBubble();
+        updatePanel();
         save();
     }
 
@@ -216,6 +353,7 @@ public final class OverlayService extends Service {
 
     private void refresh() {
         position(target, targetX, targetY);
+        position(targetB, targetBX, targetBY);
         for (int i = 0; i < 4; i++) position(pocketHandles[i], pocketX[CORNERS[i]], pocketY[CORNERS[i]]);
         guide.invalidate();
     }
@@ -229,7 +367,8 @@ public final class OverlayService extends Service {
 
     private void save() {
         SharedPreferences.Editor e = prefs.edit().putFloat("x", targetX).putFloat("y", targetY)
-                .putInt("color", colorIndex);
+                .putFloat("bx", targetBX).putFloat("by", targetBY)
+                .putInt("color", colorIndex).putInt("mode", mode).putInt("diameter", diameterDp);
         for (int i = 0; i < 6; i++) e.putFloat("px" + i, pocketX[i]).putFloat("py" + i, pocketY[i]);
         e.apply();
     }
@@ -272,6 +411,20 @@ public final class OverlayService extends Service {
             invalidate();
         }
         @Override protected void onDraw(Canvas c) {
+            float radius = dp(diameterDp) / 2f;
+            if (mode == 1) {
+                float dx = targetBX - targetX, dy = targetBY - targetY;
+                float length = (float) Math.hypot(dx, dy);
+                if (length > 1f) {
+                    float ox = -dy / length * radius, oy = dx / length * radius;
+                    c.drawLine(targetX + ox, targetY + oy, targetBX + ox, targetBY + oy, line);
+                    c.drawLine(targetX - ox, targetY - oy, targetBX - ox, targetBY - oy, line);
+                }
+                c.drawCircle(targetX, targetY, radius, line);
+                c.drawCircle(targetBX, targetBY, radius, line);
+                return;
+            }
+            c.drawCircle(targetX, targetY, dp(19), line);
             for (int i = 0; i < 6; i++) {
                 c.drawLine(targetX, targetY, pocketX[i], pocketY[i], line);
                 if (editing) c.drawCircle(pocketX[i], pocketY[i], dp(12), marker);
@@ -290,6 +443,7 @@ public final class OverlayService extends Service {
                 float sx = w / (float) oldW, sy = h / (float) oldH;
                 for (int i = 0; i < 6; i++) { pocketX[i] *= sx; pocketY[i] *= sy; }
                 targetX *= sx; targetY *= sy;
+                targetBX *= sx; targetBY *= sy;
                 updateMiddlePockets();
             }
             screenW = w; screenH = h;
@@ -304,7 +458,9 @@ public final class OverlayService extends Service {
     @Override public void onDestroy() {
         if (guide != null && guide.isAttachedToWindow()) wm.removeView(guide);
         if (target != null && target.isAttachedToWindow()) wm.removeView(target);
+        if (targetB != null && targetB.isAttachedToWindow()) wm.removeView(targetB);
         if (bubble != null && bubble.isAttachedToWindow()) wm.removeView(bubble);
+        if (panel != null && panel.isAttachedToWindow()) wm.removeView(panel);
         for (View v : pocketHandles) if (v != null && v.isAttachedToWindow()) wm.removeView(v);
         super.onDestroy();
     }

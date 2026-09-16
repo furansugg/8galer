@@ -12,4 +12,12 @@ Overlay Android ringan untuk garis bantu meja biliar.
 6. Geser cincin biru ke bola target. Keenam garis langsung mengikuti.
 7. Tap bola pintasan untuk menampilkan atau menyembunyikan panduan; geser untuk memindahkannya.
 
+## Mode koridor
+
+1. Tahan tombol pintasan, lalu tap **MODE: LUBANG** untuk berpindah ke **MODE: KORIDOR**.
+2. Geser dua lingkaran ke titik awal dan tujuan. Dua garis paralel mengikuti otomatis.
+3. Atur diameter memakai slider atau tombol **− / +** (`20–80 dp`).
+4. Tap **WARNA** untuk mengganti warna. Geser judul panel untuk memindahkan panel.
+5. Tahan **✓** untuk menutup pengaturan. Ukuran, mode, warna, dan posisi tersimpan.
+
 Build hanya memakai Android API native; tanpa dependency aplikasi pihak ketiga.
