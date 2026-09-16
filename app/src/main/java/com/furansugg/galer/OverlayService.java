@@ -25,15 +25,17 @@ import android.widget.TextView;
 
 public final class OverlayService extends Service {
     private static final int TYPE = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+    private static final int[] COLORS = {0xff00e5ff, 0xffffffff, 0xffffd600, 0xffff4081, 0xff69f0ae, 0xffff6d00};
+    private static final int[] CORNERS = {0, 2, 3, 5};
     private final float[] pocketX = new float[6], pocketY = new float[6];
-    private final View[] pocketHandles = new View[6];
+    private final View[] pocketHandles = new View[4];
     private WindowManager wm;
     private SharedPreferences prefs;
     private GuideView guide;
     private View target, bubble;
     private float targetX, targetY;
     private boolean active = true, editing;
-    private int screenW, screenH;
+    private int screenW, screenH, colorIndex;
 
     @Override public void onCreate() {
         super.onCreate();
@@ -44,7 +46,7 @@ public final class OverlayService extends Service {
         prefs = getSharedPreferences("layout", MODE_PRIVATE);
         loadPositions();
         addGuide();
-        for (int i = 0; i < 6; i++) addPocketHandle(i);
+        for (int i = 0; i < 4; i++) addPocketHandle(i);
         addTarget();
         addBubble();
         refresh();
@@ -60,8 +62,10 @@ public final class OverlayService extends Service {
             pocketX[i] = prefs.getFloat("px" + i, defaultsX[i]);
             pocketY[i] = prefs.getFloat("py" + i, defaultsY[i]);
         }
+        updateMiddlePockets();
         targetX = prefs.getFloat("x", screenW * .5f);
         targetY = prefs.getFloat("y", screenH * .5f);
+        colorIndex = prefs.getInt("color", 0) % COLORS.length;
     }
 
     private void startForegroundNow() {
@@ -86,20 +90,22 @@ public final class OverlayService extends Service {
         wm.addView(guide, p);
     }
 
-    private void addPocketHandle(final int index) {
+    private void addPocketHandle(final int handleIndex) {
+        final int index = CORNERS[handleIndex];
         View v = new View(this);
         v.setBackground(circle(Color.TRANSPARENT, 0xfffbbf24, 2));
         v.setOnTouchListener((view, e) -> {
             if (e.getAction() == MotionEvent.ACTION_DOWN || e.getAction() == MotionEvent.ACTION_MOVE) {
                 pocketX[index] = clamp(e.getRawX(), 0, screenW);
                 pocketY[index] = clamp(e.getRawY(), 0, screenH);
+                updateMiddlePockets();
                 refresh();
                 return true;
             }
             if (e.getAction() == MotionEvent.ACTION_UP) { save(); return true; }
             return false;
         });
-        pocketHandles[index] = v;
+        pocketHandles[handleIndex] = v;
         wm.addView(v, base(dp(38), dp(38)));
     }
 
@@ -158,7 +164,9 @@ public final class OverlayService extends Service {
                 }
                 if (e.getAction() == MotionEvent.ACTION_UP || e.getAction() == MotionEvent.ACTION_CANCEL) {
                     handler.removeCallbacks(longPress);
-                    if (e.getAction() == MotionEvent.ACTION_UP && !moved && !longPressed[0]) setActive(!active);
+                    if (e.getAction() == MotionEvent.ACTION_UP && !moved && !longPressed[0]) {
+                        if (editing) cycleColor(); else setActive(!active);
+                    }
                     return true;
                 }
                 return false;
@@ -187,14 +195,28 @@ public final class OverlayService extends Service {
     }
 
     private void updateBubble() {
-        ((TextView) bubble).setText(editing ? "✓" : "8");
-        int color = !active ? 0xaa475569 : editing ? 0xddea580c : 0xdd16a34a;
+        ((TextView) bubble).setText(editing ? "●" : "8");
+        int color = !active ? 0xaa475569 : editing ? COLORS[colorIndex] : 0xdd16a34a;
         bubble.setBackground(circle(color, 0xddffffff, 1));
+    }
+
+    private void cycleColor() {
+        colorIndex = (colorIndex + 1) % COLORS.length;
+        guide.setLineColor(COLORS[colorIndex]);
+        updateBubble();
+        save();
+    }
+
+    private void updateMiddlePockets() {
+        pocketX[1] = (pocketX[0] + pocketX[2]) / 2f;
+        pocketY[1] = (pocketY[0] + pocketY[2]) / 2f;
+        pocketX[4] = (pocketX[3] + pocketX[5]) / 2f;
+        pocketY[4] = (pocketY[3] + pocketY[5]) / 2f;
     }
 
     private void refresh() {
         position(target, targetX, targetY);
-        for (int i = 0; i < 6; i++) position(pocketHandles[i], pocketX[i], pocketY[i]);
+        for (int i = 0; i < 4; i++) position(pocketHandles[i], pocketX[CORNERS[i]], pocketY[CORNERS[i]]);
         guide.invalidate();
     }
 
@@ -206,7 +228,8 @@ public final class OverlayService extends Service {
     }
 
     private void save() {
-        SharedPreferences.Editor e = prefs.edit().putFloat("x", targetX).putFloat("y", targetY);
+        SharedPreferences.Editor e = prefs.edit().putFloat("x", targetX).putFloat("y", targetY)
+                .putInt("color", colorIndex);
         for (int i = 0; i < 6; i++) e.putFloat("px" + i, pocketX[i]).putFloat("py" + i, pocketY[i]);
         e.apply();
     }
@@ -234,7 +257,7 @@ public final class OverlayService extends Service {
         private final Paint frame = new Paint(Paint.ANTI_ALIAS_FLAG);
         GuideView() {
             super(OverlayService.this);
-            line.setColor(0x9900e5ff);
+            setLineColor(COLORS[colorIndex]);
             line.setStrokeWidth(Math.max(1f, getResources().getDisplayMetrics().density));
             marker.setColor(0xaafbbf24);
             marker.setStyle(Paint.Style.STROKE);
@@ -243,6 +266,10 @@ public final class OverlayService extends Service {
             frame.setStyle(Paint.Style.STROKE);
             frame.setStrokeWidth(dp(1));
             frame.setPathEffect(new DashPathEffect(new float[]{dp(8), dp(6)}, 0));
+        }
+        void setLineColor(int color) {
+            line.setColor((color & 0x00ffffff) | 0x99000000);
+            invalidate();
         }
         @Override protected void onDraw(Canvas c) {
             for (int i = 0; i < 6; i++) {
@@ -263,6 +290,7 @@ public final class OverlayService extends Service {
                 float sx = w / (float) oldW, sy = h / (float) oldH;
                 for (int i = 0; i < 6; i++) { pocketX[i] *= sx; pocketY[i] *= sy; }
                 targetX *= sx; targetY *= sy;
+                updateMiddlePockets();
             }
             screenW = w; screenH = h;
             post(() -> { refresh(); save(); });
