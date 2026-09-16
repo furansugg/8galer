@@ -1,0 +1,23 @@
+plugins { id "com.android.application" }
+
+android {
+    namespace "com.furansugg.galer"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.furansugg.galer"
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.debug
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt")
+        }
+    }
+}
