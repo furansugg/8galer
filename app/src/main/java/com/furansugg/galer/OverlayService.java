@@ -10,11 +10,13 @@ import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.DashPathEffect;
 import android.graphics.Paint;
 import android.graphics.PixelFormat;
-import android.graphics.RectF;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -23,14 +25,15 @@ import android.widget.TextView;
 
 public final class OverlayService extends Service {
     private static final int TYPE = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+    private final float[] pocketX = new float[6], pocketY = new float[6];
+    private final View[] pocketHandles = new View[6];
     private WindowManager wm;
     private SharedPreferences prefs;
     private GuideView guide;
-    private final View[] corners = new View[4];
     private View target, bubble;
-    private float left, top, right, bottom, targetX, targetY;
-    private boolean active = true;
-    private int screenW, screenH, handleSize;
+    private float targetX, targetY;
+    private boolean active = true, editing;
+    private int screenW, screenH;
 
     @Override public void onCreate() {
         super.onCreate();
@@ -38,19 +41,27 @@ public final class OverlayService extends Service {
         wm = (WindowManager) getSystemService(WINDOW_SERVICE);
         screenW = getResources().getDisplayMetrics().widthPixels;
         screenH = getResources().getDisplayMetrics().heightPixels;
-        handleSize = dp(38);
         prefs = getSharedPreferences("layout", MODE_PRIVATE);
-        left = prefs.getFloat("left", screenW * .12f);
-        top = prefs.getFloat("top", screenH * .22f);
-        right = prefs.getFloat("right", screenW * .88f);
-        bottom = prefs.getFloat("bottom", screenH * .78f);
-        targetX = prefs.getFloat("x", screenW * .5f);
-        targetY = prefs.getFloat("y", screenH * .5f);
+        loadPositions();
         addGuide();
-        for (int i = 0; i < 4; i++) addCorner(i);
+        for (int i = 0; i < 6; i++) addPocketHandle(i);
         addTarget();
         addBubble();
         refresh();
+        setEditing(false);
+    }
+
+    private void loadPositions() {
+        float left = screenW * .18f, right = screenW * .82f;
+        float top = screenH * .20f, bottom = screenH * .80f, middle = (left + right) / 2f;
+        float[] defaultsX = {left, middle, right, left, middle, right};
+        float[] defaultsY = {top, top, top, bottom, bottom, bottom};
+        for (int i = 0; i < 6; i++) {
+            pocketX[i] = prefs.getFloat("px" + i, defaultsX[i]);
+            pocketY[i] = prefs.getFloat("py" + i, defaultsY[i]);
+        }
+        targetX = prefs.getFloat("x", screenW * .5f);
+        targetY = prefs.getFloat("y", screenH * .5f);
     }
 
     private void startForegroundNow() {
@@ -62,7 +73,7 @@ public final class OverlayService extends Service {
         Notification n = new Notification.Builder(this, id)
                 .setSmallIcon(android.R.drawable.ic_menu_compass)
                 .setContentTitle("8Galer aktif")
-                .setContentText("Tap tombol 8 untuk toggle overlay")
+                .setContentText("Tap 8: toggle · tahan 8: atur lubang")
                 .setContentIntent(open).setOngoing(true).build();
         if (Build.VERSION.SDK_INT >= 34) startForeground(8, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
         else startForeground(8, n);
@@ -75,89 +86,129 @@ public final class OverlayService extends Service {
         wm.addView(guide, p);
     }
 
-    private void addCorner(final int index) {
+    private void addPocketHandle(final int index) {
         View v = new View(this);
-        v.setBackground(circle(0xfff59e0b, 0xffffffff, 2));
-        v.setOnTouchListener(new Drag((x, y) -> {
-            float min = dp(100);
-            if (index == 0 || index == 2) left = Math.min(x, right - min); else right = Math.max(x, left + min);
-            if (index == 0 || index == 1) top = Math.min(y, bottom - min); else bottom = Math.max(y, top + min);
-            clampTable(); refresh(); save();
-        }, null));
-        corners[index] = v;
-        wm.addView(v, base(handleSize, handleSize));
+        v.setBackground(circle(Color.TRANSPARENT, 0xfffbbf24, 2));
+        v.setOnTouchListener((view, e) -> {
+            if (e.getAction() == MotionEvent.ACTION_DOWN || e.getAction() == MotionEvent.ACTION_MOVE) {
+                pocketX[index] = clamp(e.getRawX(), 0, screenW);
+                pocketY[index] = clamp(e.getRawY(), 0, screenH);
+                refresh();
+                return true;
+            }
+            if (e.getAction() == MotionEvent.ACTION_UP) { save(); return true; }
+            return false;
+        });
+        pocketHandles[index] = v;
+        wm.addView(v, base(dp(38), dp(38)));
     }
 
     private void addTarget() {
         target = new View(this);
-        target.setBackground(circle(0x3300e5ff, 0xff00e5ff, 3));
-        target.setOnTouchListener(new Drag((x, y) -> {
-            targetX = clamp(x, 0, screenW); targetY = clamp(y, 0, screenH);
-            refresh(); save();
-        }, null));
-        wm.addView(target, base(dp(54), dp(54)));
+        target.setBackground(circle(0x1200e5ff, 0xdd00e5ff, 2));
+        target.setOnTouchListener((view, e) -> {
+            if (e.getAction() == MotionEvent.ACTION_DOWN || e.getAction() == MotionEvent.ACTION_MOVE) {
+                targetX = clamp(e.getRawX(), 0, screenW);
+                targetY = clamp(e.getRawY(), 0, screenH);
+                refresh();
+                return true;
+            }
+            if (e.getAction() == MotionEvent.ACTION_UP) { save(); return true; }
+            return false;
+        });
+        wm.addView(target, base(dp(38), dp(38)));
     }
 
     private void addBubble() {
         TextView v = new TextView(this);
-        v.setText("8"); v.setTextColor(Color.WHITE); v.setTextSize(22); v.setGravity(Gravity.CENTER);
-        v.setBackground(circle(0xff16a34a, Color.WHITE, 2));
-        v.setElevation(dp(8));
-        final float[] start = new float[2];
+        v.setText("8");
+        v.setTextColor(Color.WHITE);
+        v.setTextSize(18);
+        v.setGravity(Gravity.CENTER);
+        v.setBackground(circle(0xdd16a34a, 0xddffffff, 1));
+        v.setElevation(dp(5));
+        Handler handler = new Handler(Looper.getMainLooper());
+        final boolean[] longPressed = {false};
+        final Runnable longPress = () -> {
+            longPressed[0] = true;
+            if (!active) setActive(true);
+            setEditing(!editing);
+        };
         v.setOnTouchListener(new View.OnTouchListener() {
-            float downX, downY; int originX, originY;
+            float downX, downY;
+            int originX, originY;
+            boolean moved;
             @Override public boolean onTouch(View view, MotionEvent e) {
                 WindowManager.LayoutParams p = (WindowManager.LayoutParams) view.getLayoutParams();
                 if (e.getAction() == MotionEvent.ACTION_DOWN) {
                     downX = e.getRawX(); downY = e.getRawY(); originX = p.x; originY = p.y;
-                    start[0] = downX; start[1] = downY; return true;
+                    moved = false; longPressed[0] = false;
+                    handler.postDelayed(longPress, 550);
+                    return true;
                 }
                 if (e.getAction() == MotionEvent.ACTION_MOVE) {
-                    p.x = originX + Math.round(e.getRawX() - downX);
-                    p.y = originY + Math.round(e.getRawY() - downY);
-                    wm.updateViewLayout(view, p); return true;
+                    float dx = e.getRawX() - downX, dy = e.getRawY() - downY;
+                    if (Math.hypot(dx, dy) > dp(7)) {
+                        moved = true; handler.removeCallbacks(longPress);
+                        p.x = Math.round(clamp(originX + dx, 0, screenW - p.width));
+                        p.y = Math.round(clamp(originY + dy, 0, screenH - p.height));
+                        wm.updateViewLayout(view, p);
+                    }
+                    return true;
                 }
-                if (e.getAction() == MotionEvent.ACTION_UP) {
-                    if (Math.hypot(e.getRawX() - start[0], e.getRawY() - start[1]) < dp(8)) toggle();
+                if (e.getAction() == MotionEvent.ACTION_UP || e.getAction() == MotionEvent.ACTION_CANCEL) {
+                    handler.removeCallbacks(longPress);
+                    if (e.getAction() == MotionEvent.ACTION_UP && !moved && !longPressed[0]) setActive(!active);
                     return true;
                 }
                 return false;
             }
         });
         bubble = v;
-        WindowManager.LayoutParams p = base(dp(52), dp(52)); p.x = dp(12); p.y = screenH / 3;
+        WindowManager.LayoutParams p = base(dp(44), dp(44));
+        p.x = dp(8); p.y = screenH / 3;
         wm.addView(v, p);
     }
 
-    private void toggle() {
-        active = !active;
-        int visibility = active ? View.VISIBLE : View.GONE;
-        guide.setVisibility(visibility); target.setVisibility(visibility);
-        for (View corner : corners) corner.setVisibility(visibility);
-        bubble.setBackground(circle(active ? 0xff16a34a : 0xff475569, Color.WHITE, 2));
+    private void setActive(boolean enabled) {
+        active = enabled;
+        if (!active) editing = false;
+        guide.setVisibility(active ? View.VISIBLE : View.GONE);
+        target.setVisibility(active ? View.VISIBLE : View.GONE);
+        for (View handle : pocketHandles) handle.setVisibility(active && editing ? View.VISIBLE : View.GONE);
+        updateBubble();
+    }
+
+    private void setEditing(boolean enabled) {
+        editing = enabled;
+        for (View handle : pocketHandles) handle.setVisibility(active && editing ? View.VISIBLE : View.GONE);
+        guide.invalidate();
+        updateBubble();
+    }
+
+    private void updateBubble() {
+        ((TextView) bubble).setText(editing ? "✓" : "8");
+        int color = !active ? 0xaa475569 : editing ? 0xddea580c : 0xdd16a34a;
+        bubble.setBackground(circle(color, 0xddffffff, 1));
     }
 
     private void refresh() {
         position(target, targetX, targetY);
-        position(corners[0], left, top); position(corners[1], right, top);
-        position(corners[2], left, bottom); position(corners[3], right, bottom);
+        for (int i = 0; i < 6; i++) position(pocketHandles[i], pocketX[i], pocketY[i]);
         guide.invalidate();
     }
 
     private void position(View view, float x, float y) {
         WindowManager.LayoutParams p = (WindowManager.LayoutParams) view.getLayoutParams();
-        p.x = Math.round(x - p.width / 2f); p.y = Math.round(y - p.height / 2f);
+        p.x = Math.round(x - p.width / 2f);
+        p.y = Math.round(y - p.height / 2f);
         wm.updateViewLayout(view, p);
     }
 
-    private void clampTable() {
-        left = clamp(left, 0, screenW); right = clamp(right, 0, screenW);
-        top = clamp(top, 0, screenH); bottom = clamp(bottom, 0, screenH);
-    }
-
     private void save() {
-        prefs.edit().putFloat("left", left).putFloat("top", top).putFloat("right", right)
-                .putFloat("bottom", bottom).putFloat("x", targetX).putFloat("y", targetY).apply();
+        SharedPreferences.Editor e = prefs.edit().putFloat("x", targetX).putFloat("y", targetY);
+        for (int i = 0; i < 6; i++) e.putFloat("px" + i, pocketX[i]).putFloat("py" + i, pocketY[i]);
+        e.apply();
     }
 
     private WindowManager.LayoutParams base(int width, int height) {
@@ -171,59 +222,62 @@ public final class OverlayService extends Service {
 
     private android.graphics.drawable.Drawable circle(int fill, int stroke, int strokeDp) {
         android.graphics.drawable.GradientDrawable d = new android.graphics.drawable.GradientDrawable();
-        d.setShape(android.graphics.drawable.GradientDrawable.OVAL); d.setColor(fill);
-        d.setStroke(dp(strokeDp), stroke); return d;
+        d.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        d.setColor(fill);
+        d.setStroke(dp(strokeDp), stroke);
+        return d;
     }
 
     private final class GuideView extends View {
         private final Paint line = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint marker = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint frame = new Paint(Paint.ANTI_ALIAS_FLAG);
         GuideView() {
             super(OverlayService.this);
-            line.setColor(0xcc00e5ff); line.setStrokeWidth(dp(1));
-            frame.setColor(0xfff59e0b); frame.setStyle(Paint.Style.STROKE); frame.setStrokeWidth(dp(2));
+            line.setColor(0x9900e5ff);
+            line.setStrokeWidth(Math.max(1f, getResources().getDisplayMetrics().density));
+            marker.setColor(0xaafbbf24);
+            marker.setStyle(Paint.Style.STROKE);
+            marker.setStrokeWidth(dp(1));
+            frame.setColor(0x88fbbf24);
+            frame.setStyle(Paint.Style.STROKE);
+            frame.setStrokeWidth(dp(1));
+            frame.setPathEffect(new DashPathEffect(new float[]{dp(8), dp(6)}, 0));
         }
         @Override protected void onDraw(Canvas c) {
-            c.drawRect(left, top, right, bottom, frame);
-            float midX = (left + right) / 2f;
-            float[][] pockets = {{left,top},{midX,top},{right,top},{left,bottom},{midX,bottom},{right,bottom}};
-            for (float[] pocket : pockets) {
-                c.drawLine(targetX, targetY, pocket[0], pocket[1], line);
-                c.drawCircle(pocket[0], pocket[1], dp(7), frame);
+            for (int i = 0; i < 6; i++) {
+                c.drawLine(targetX, targetY, pocketX[i], pocketY[i], line);
+                if (editing) c.drawCircle(pocketX[i], pocketY[i], dp(12), marker);
+            }
+            if (editing) {
+                c.drawLine(pocketX[0], pocketY[0], pocketX[1], pocketY[1], frame);
+                c.drawLine(pocketX[1], pocketY[1], pocketX[2], pocketY[2], frame);
+                c.drawLine(pocketX[2], pocketY[2], pocketX[5], pocketY[5], frame);
+                c.drawLine(pocketX[5], pocketY[5], pocketX[4], pocketY[4], frame);
+                c.drawLine(pocketX[4], pocketY[4], pocketX[3], pocketY[3], frame);
+                c.drawLine(pocketX[3], pocketY[3], pocketX[0], pocketY[0], frame);
             }
         }
         @Override protected void onSizeChanged(int w, int h, int oldW, int oldH) {
             if (oldW > 0 && oldH > 0) {
                 float sx = w / (float) oldW, sy = h / (float) oldH;
-                left *= sx; right *= sx; targetX *= sx;
-                top *= sy; bottom *= sy; targetY *= sy;
+                for (int i = 0; i < 6; i++) { pocketX[i] *= sx; pocketY[i] *= sy; }
+                targetX *= sx; targetY *= sy;
             }
             screenW = w; screenH = h;
             post(() -> { refresh(); save(); });
         }
     }
 
-    private interface Move { void to(float x, float y); }
-    private final class Drag implements View.OnTouchListener {
-        private final Move move; private final Runnable click;
-        Drag(Move move, Runnable click) { this.move = move; this.click = click; }
-        @Override public boolean onTouch(View v, MotionEvent e) {
-            if (e.getAction() == MotionEvent.ACTION_DOWN || e.getAction() == MotionEvent.ACTION_MOVE) {
-                move.to(e.getRawX(), e.getRawY()); return true;
-            }
-            if (e.getAction() == MotionEvent.ACTION_UP) { if (click != null) click.run(); return true; }
-            return false;
-        }
-    }
-
     private float clamp(float n, float min, float max) { return Math.max(min, Math.min(max, n)); }
     private int dp(int n) { return Math.round(n * getResources().getDisplayMetrics().density); }
-
     @Override public int onStartCommand(Intent intent, int flags, int id) { return START_STICKY; }
     @Override public IBinder onBind(Intent intent) { return null; }
     @Override public void onDestroy() {
-        View[] views = {guide, target, bubble, corners[0], corners[1], corners[2], corners[3]};
-        for (View v : views) if (v != null && v.isAttachedToWindow()) wm.removeView(v);
+        if (guide != null && guide.isAttachedToWindow()) wm.removeView(guide);
+        if (target != null && target.isAttachedToWindow()) wm.removeView(target);
+        if (bubble != null && bubble.isAttachedToWindow()) wm.removeView(bubble);
+        for (View v : pocketHandles) if (v != null && v.isAttachedToWindow()) wm.removeView(v);
         super.onDestroy();
     }
 }
